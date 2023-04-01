@@ -12,7 +12,7 @@ docker build -t glpi-agent .
 
 * Learn perl version: ```docker run -it glpi-agent```
 
-* List glpi-agent executables: ```docker run -it --entrypoint=/bin/bash glpi-agent -c "ls -hal /usr/local/bin/glpi*"````
+* List glpi-agent executables: ```docker run -it --entrypoint=/bin/bash glpi-agent -c "ls -hal /usr/local/bin/glpi*"```
 
 * Learn glpi-agent version: ```docker run -it glpi-agent glpi-agent --version```
 
