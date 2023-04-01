@@ -1,6 +1,6 @@
 # glpi-agent-docker
 
-Docker Image of glpi-agent
+Docker Image of glpi-agent (forked at 31.03.2023).
 
 ## Build
 
