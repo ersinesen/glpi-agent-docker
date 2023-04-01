@@ -1,0 +1,221 @@
+#!/usr/bin/perl
+
+use strict;
+use warnings;
+
+use lib './lib';
+use setup;
+
+use English qw(-no_match_vars) ;
+use Getopt::Long;
+use Pod::Usage;
+use UNIVERSAL::require;
+
+use GLPI::Agent::Task::ESX;
+use GLPI::Agent::Logger;
+use GLPI::Agent::Version;
+
+my $options = {
+    path    => '-'
+};
+
+GetOptions(
+    $options,
+    'host=s',
+    'user=s',
+    'password=s',
+    'directory=s', # deprecated in favour of path or stdout
+    'path=s',
+    'stdout',
+    'tag=s',
+    'help',
+    'version',
+    'dump',
+    'dumpfile=s',
+    'json',
+) or pod2usage(-verbose => 0);
+
+pod2usage(-verbose => 0, -exitstatus => 0) if $options->{help};
+
+if ($options->{version}) {
+    my $PROVIDER = $GLPI::Agent::Version::PROVIDER;
+    map { print $_."\n" }
+        "glpi-esx $GLPI::Agent::Task::ESX::VERSION",
+        "based on $PROVIDER Agent v$GLPI::Agent::Version::VERSION",
+        @{$GLPI::Agent::Version::COMMENTS};
+    exit 0;
+}
+
+my $esx = GLPI::Agent::Task::ESX->new(
+    target => {},
+);
+
+inventory_from_dump($options->{dumpfile})
+    if ($options->{dumpfile});
+
+$options->{path} = '-' if $options->{stdout};
+$options->{path} = $options->{directory} unless $options->{path};
+
+pod2usage(-verbose => 0) unless
+    $options->{host}      &&
+    $options->{user}      &&
+    $options->{password};
+
+if ($options->{dump}) {
+    die "Data::Dumper perl module needed for --dump option. Please install it.\n"
+        unless Data::Dumper->require();
+}
+
+if (!$esx->connect(
+    host     => $options->{host},
+    user     => $options->{user},
+    password => $options->{password},
+)) {
+    die "Connection failure: ".$esx->lastError()."\n";
+}
+
+my $hasError = 0;
+my $hostIds = $esx->getHostIds();
+foreach my $hostId (@$hostIds) {
+
+    my $file = write_inventory($hostId);
+
+    next unless ($options->{dump});
+
+    my $host = $esx->{vpbs}->getHostFullInfo($hostId);
+    my $dumper = Data::Dumper->new([$host],["host"]);
+    if (!$file || $file eq '-') {
+        $file = $hostId."-hostfullinfo.dump";
+    } else {
+        $file =~ s/\.(xml|json)$/-hostfullinfo.dump/;
+    }
+
+    if (open my $handle, '>', $file) {
+        print $handle $dumper->Dump();
+        close $handle;
+        print("ESX Host full info dump saved in $file\n");
+    } else {
+        $hasError = 1;
+        print("Can't write to $file: $ERRNO\n");
+    }
+}
+exit($hasError);
+
+sub write_inventory {
+    my ($hostId, $file) = @_;
+
+    my $inventory = $esx->createInventory($hostId, $options->{tag});
+    $inventory->setFormat($options->{json} ? "json" : "xml");
+
+    $file = $inventory->save($options->{path}) unless $file;
+    if ($file) {
+        print STDERR "Inventory ".($file eq '-' ? "dumped\n" : "saved in $file\n");
+    } else {
+        $hasError = 1;
+        print STDERR "Can't write to $file: $ERRNO\n";
+    }
+
+    return $file;
+}
+
+sub inventory_from_dump {
+    my ($file) = @_;
+
+    my $format = $options->{json} ? 'json' : 'xml';
+
+    $file =~ s/\-hostfullinfo.dump$/.$format/;
+
+    die "dumpfile must be a *-hostfullinfo.dump file\n"
+        if $file eq $options->{dumpfile};
+
+    our $host ;
+
+    do $options->{dumpfile}
+        or die "Can't load $options->{dumpfile}: $!\n";
+
+    die "Can't load host full infos from $options->{dumpfile}\n"
+        unless $host;
+
+    $esx->{vpbs} = GLPI::Agent::Task::ESX::Dump->new($host);
+
+    write_inventory(undef, $file);
+
+    exit 0;
+}
+
+package GLPI::Agent::Task::ESX::Dump;
+
+sub new {
+    my ($class, $fullinfo) = @_;
+    return bless { _fullinfo => $fullinfo }, $class;
+}
+
+sub getHostFullInfo {
+    my ($self) = @_;
+    return $self->{_fullinfo};
+}
+
+__END__
+
+=head1 NAME
+
+glpi-esx - vCenter/ESX/ESXi remote inventory from command line
+
+=head1 SYNOPSIS
+
+glpi-esx --host <host> --user <user> --password <password> --path <directory or file>
+
+  Options:
+    --help                 this menu
+    --host hostname        ESX server hostname
+    --user username        user name
+    --password xxxx        user password
+    --path path            output directory or file
+    --stdout               dump inventory on stdout (enabled by default if no path is set)
+    --tag tag              tag for the inventoried machine
+    --json                 use json as format for generated inventories
+
+  Advanced options:
+    --dump                 also dump esx host full info datas in a *-hostfullinfo.dump file
+    --dumpfile file        generate one inventory from a *-hostfullinfo.dump file
+
+=head1 EXAMPLES
+
+    % glpi-esx --host myesx --user foo --password bar --path /tmp --json
+
+You can import the .json file in your inventory server with the glpi-injector tool.
+
+    % glpi-injector -v --file /tmp/*.json -u https://example/
+
+=head1 DESCRIPTION
+
+F<glpi-esx> creates inventory of remote ESX/ESXi and vCenter VMware.
+It uses the SOAP interface of the remote server.
+
+Supported systems:
+
+=over 4
+
+=item F<ESX and ESXi 3.5>
+
+=item F<ESX and ESXi 4.1>
+
+=item F<ESXi 5.0>
+
+=item F<vCenter 4.1>
+
+=item F<vCenter 5.0>
+
+=back
+
+
+Active Directory users, please note the AD authentication doesn't work. You must
+create a account on the VMware server.
+
+=head1 LIMITATION
+
+So far, ESX serial number are not collected.
+
+=head1 SECURITY
+
+The SSL hostname check of the server is disabled.
