@@ -26,7 +26,7 @@ docker build -t glpi-agent .
 
 ```
 # make sure there is a net directory
-docker run -it glpi-agent glpi-netdiscovery --first 192.168.1.20 --last 192.168.1.255 --v1 -s net --debug --timeout 10
+docker run -it glpi-agent glpi-netdiscovery --first 192.168.1.1 --last 192.168.1.255 --v1 -s net --debug --timeout 10
 
 docker run -it glpi-agent glpi-injector -d net/netdiscovery/ -u http://localhost
 ```
